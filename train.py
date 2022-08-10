@@ -1,21 +1,16 @@
-import numpy as np
-import torch
 import argparse
-import os
-import math
-import gym
-import sys
-import random
-import time
 import json
+import os
+import time
+
 import dmc2gym
-import copy
+import gym
+import torch
 
 import utils
 from logger import Logger
-from video import VideoRecorder
-
 from sac_ae import SacAeAgent
+from video import VideoRecorder
 
 
 def parse_args():
