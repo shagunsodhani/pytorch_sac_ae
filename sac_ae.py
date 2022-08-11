@@ -1,13 +1,14 @@
+import copy
+import math
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import copy
-import math
 
 import utils
-from encoder import make_encoder
 from decoder import make_decoder
+from encoder import make_encoder
 
 LOG_FREQ = 10000
 
@@ -195,6 +196,10 @@ class Critic(nn.Module):
             L.log_param("train_critic/q2_fc%d" % i, self.Q2.trunk[i * 2], step)
 
 
+def count_parameters(model: nn.Module):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 class SacAeAgent(object):
     """SAC+AE algorithm."""
 
@@ -249,6 +254,8 @@ class SacAeAgent(object):
             num_layers,
             num_filters,
         ).to(device)
+
+        print(f"Number of actor params: {count_parameters(self.actor)}")
 
         self.critic = Critic(
             obs_shape,
@@ -392,12 +399,16 @@ class SacAeAgent(object):
         self.log_alpha_optimizer.step()
 
     def update_decoder(self, obs, target_obs, L, step):
+        if obs.dim() == 5:
+            obs = obs[:, -1, :].unsqueeze(1)
+            target_obs = target_obs[:, -1, :]
         h = self.critic.encoder(obs)
 
         if target_obs.dim() == 4:
             # preprocess images to be in [-0.5, 0.5] range
             target_obs = utils.preprocess_obs(target_obs)
         rec_obs = self.decoder(h)
+        breakpoint()
         rec_loss = F.mse_loss(target_obs, rec_obs)
 
         # add L2 penalty on latent representation
