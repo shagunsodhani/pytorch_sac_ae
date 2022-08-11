@@ -146,28 +146,39 @@ class FrameStack(gym.Wrapper):
         self._frames = deque([], maxlen=k)
         observation_space = env.observation_space
         if isinstance(observation_space, gym.spaces.dict.Dict):
-            observation_space = observation_space["observation"]
+            self.obs_key = "pixel_observation"
+            observation_space = observation_space[self.obs_key]
+            self._process_obs = self._select_pixel_obs
+        else:
+            self._process_obs = lambda x: x
         shp = observation_space.shape
-        breakpoint()
         self.observation_space = gym.spaces.Box(
             low=0,
             high=1,
-            shape=((shp[0] * k,) + shp[1:]),
+            # shape=((shp[0] * k,) + shp[1:]),
+            shape=(k, *shp),
             dtype=observation_space.dtype,
         )
         self._max_episode_steps = env._max_episode_steps
 
+    def _select_pixel_obs(self, obs):
+        obs =  obs[self.obs_key]
+        obs = np.expand_dims(obs, axis=0)
+        return obs
+
     def reset(self):
         obs = self.env.reset()
+        obs = self._select_pixel_obs(obs)
         for _ in range(self._k):
             self._frames.append(obs)
         return self._get_obs()
 
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
+        obs = self._select_pixel_obs(obs)
         self._frames.append(obs)
         return self._get_obs(), reward, done, info
 
     def _get_obs(self):
         assert len(self._frames) == self._k
-        return np.concatenate(list(self._frames), axis=0)
+        return np.concatenate(self._frames, axis=0)
