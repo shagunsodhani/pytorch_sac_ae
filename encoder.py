@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+import resnet
+
 
 def tie_weights(src, trg):
     assert type(src) == type(trg)
@@ -11,7 +13,30 @@ def tie_weights(src, trg):
 OUT_DIM = {2: 39, 4: 35, 6: 31}
 
 
-class PixelEncoder(nn.Module):
+class BasePixelEncoder(nn.Module):
+    """Base Convolutional encoder of pixels observations."""
+
+    def reparameterize(self, mu, logstd):
+        std = torch.exp(logstd)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def log(self, L, step, log_freq):
+        if step % log_freq != 0:
+            return
+
+        for k, v in self.outputs.items():
+            L.log_histogram("train_encoder/%s_hist" % k, v, step)
+            if len(v.shape) > 2:
+                L.log_image("train_encoder/%s_img" % k, v[0], step)
+
+        for i in range(self.num_layers):
+            L.log_param("train_encoder/conv%s" % (i + 1), self.convs[i], step)
+        L.log_param("train_encoder/fc", self.fc, step)
+        L.log_param("train_encoder/ln", self.ln, step)
+
+
+class PixelEncoder(BasePixelEncoder):
     """Convolutional encoder of pixels observations."""
 
     def __init__(self, obs_shape, feature_dim, num_layers=2, num_filters=32):
@@ -68,25 +93,54 @@ class PixelEncoder(nn.Module):
 
         return out
 
-    def copy_conv_weights_from(self, source):
-        """Tie convolutional layers"""
-        # only tie conv layers
-        for i in range(self.num_layers):
-            tie_weights(src=source.convs[i], trg=self.convs[i])
 
-    def log(self, L, step, log_freq):
-        if step % log_freq != 0:
-            return
+class ResNetEncoder(BasePixelEncoder):
+    """Convolutional encoder of pixels observations."""
 
-        for k, v in self.outputs.items():
-            L.log_histogram("train_encoder/%s_hist" % k, v, step)
-            if len(v.shape) > 2:
-                L.log_image("train_encoder/%s_img" % k, v[0], step)
+    def __init__(
+        self,
+        obs_shape,
+        feature_dim,
+        num_layers=2,
+        num_filters=32,
+        num_stacked_frames: int = 3,
+    ):
+        super().__init__()
 
-        for i in range(self.num_layers):
-            L.log_param("train_encoder/conv%s" % (i + 1), self.convs[i], step)
-        L.log_param("train_encoder/fc", self.fc, step)
-        L.log_param("train_encoder/ln", self.ln, step)
+        self.encoder = resnet._resnet_encoder(
+            block=resnet.Bottleneck, layers=[2, 2, 2, 2], weights=None, progress=False
+        )
+        self.num_stacked_frames = num_stacked_frames
+        assert len(obs_shape) == 4
+
+        self.encoder_output_dim = 2048
+        self.feature_dim = feature_dim
+        self.fc = nn.Linear(self.encoder_output_dim, self.feature_dim)
+        self.ln = nn.LayerNorm(self.feature_dim)
+
+    def forward_conv(self, obs):
+        obs = obs / 255.0
+        obs_shape = obs.shape
+        batched_obs = obs.reshape(obs_shape[0] * obs.shape[1], *obs.shape[2:])
+        output = self.encoder(batched_obs)
+        return output.reshape(obs_shape[0], obs_shape[1], self.encoder_output_dim).mean(
+            dim=1
+        )
+
+    def forward(self, obs, detach=False):
+
+        h = self.forward_conv(obs)
+
+        if detach:
+            h = h.detach()
+
+        h_fc = self.fc(h)
+
+        h_norm = self.ln(h_fc)
+
+        out = torch.tanh(h_norm)
+
+        return out
 
 
 class IdentityEncoder(nn.Module):
@@ -106,7 +160,11 @@ class IdentityEncoder(nn.Module):
         pass
 
 
-_AVAILABLE_ENCODERS = {"pixel": PixelEncoder, "identity": IdentityEncoder}
+_AVAILABLE_ENCODERS = {
+    "pixel": ResNetEncoder,
+    "identity": IdentityEncoder,
+    "resnet": ResNetEncoder,
+}
 
 
 def make_encoder(encoder_type, obs_shape, feature_dim, num_layers, num_filters):
