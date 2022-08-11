@@ -6,6 +6,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import decoder
+import encoder
+import resnet
 import utils
 from decoder import make_decoder
 from encoder import make_encoder
@@ -40,10 +43,35 @@ def weight_init(m):
         # delta-orthogonal init from https://arxiv.org/pdf/1806.05393.pdf
         assert m.weight.size(2) == m.weight.size(3)
         m.weight.data.fill_(0.0)
-        m.bias.data.fill_(0.0)
+        if m.bias is not None:
+            m.bias.data.fill_(0.0)
         mid = m.weight.size(2) // 2
         gain = nn.init.calculate_gain("relu")
         nn.init.orthogonal_(m.weight.data[:, :, mid, mid], gain)
+    elif isinstance(
+        m,
+        (
+            encoder.PixelEncoder,
+            nn.BatchNorm2d,
+            nn.ReLU,
+            nn.MaxPool2d,
+            nn.Sequential,
+            resnet.Bottleneck,
+            nn.AdaptiveAvgPool2d,
+            resnet.ResNetEncoder,
+            nn.LayerNorm,
+            Actor,
+            Critic,
+            QFunction,
+            encoder.ResNetEncoder,
+            nn.ModuleList,
+            decoder.PixelDecoder,
+        ),
+    ):
+        pass
+    else:
+        print(type(m))
+        breakpoint()
 
 
 class Actor(nn.Module):
@@ -408,7 +436,6 @@ class SacAeAgent(object):
             # preprocess images to be in [-0.5, 0.5] range
             target_obs = utils.preprocess_obs(target_obs)
         rec_obs = self.decoder(h)
-        breakpoint()
         rec_loss = F.mse_loss(target_obs, rec_obs)
 
         # add L2 penalty on latent representation

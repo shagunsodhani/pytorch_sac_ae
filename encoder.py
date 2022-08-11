@@ -10,7 +10,8 @@ def tie_weights(src, trg):
     trg.bias = src.bias
 
 
-OUT_DIM = {2: 39, 4: 35, 6: 31}
+# OUT_DIM = {2: 39, 4: 35, 6: 31}
+OUT_DIM = {2: 39, 4: 57, 6: 31}
 
 
 class BasePixelEncoder(nn.Module):
@@ -35,6 +36,18 @@ class BasePixelEncoder(nn.Module):
         L.log_param("train_encoder/fc", self.fc, step)
         L.log_param("train_encoder/ln", self.ln, step)
 
+    def copy_conv_weights_from(self, source):
+        """Tie convolutional layers"""
+
+        for (
+            (src_module_name, src_module_param),
+            (trg_module_name, trg_module_param),
+        ) in zip(source.named_parameters(), self.named_parameters()):
+            # Note that we tie the fc layer of the encoder as well but that layer isnt used.
+            if "encoder" in src_module_name:
+                if "weight" in src_module_name or "bias" in src_module_name:
+                    trg_module_param = src_module_param
+
 
 class PixelEncoder(BasePixelEncoder):
     """Convolutional encoder of pixels observations."""
@@ -42,7 +55,7 @@ class PixelEncoder(BasePixelEncoder):
     def __init__(self, obs_shape, feature_dim, num_layers=2, num_filters=32):
         super().__init__()
 
-        assert len(obs_shape) == 3
+        assert len(obs_shape) in [3, 4]
 
         self.feature_dim = feature_dim
         self.num_layers = num_layers
@@ -57,15 +70,7 @@ class PixelEncoder(BasePixelEncoder):
 
         self.outputs = dict()
 
-    def reparameterize(self, mu, logstd):
-        std = torch.exp(logstd)
-        eps = torch.randn_like(std)
-        return mu + eps * std
-
-    def forward_conv(self, obs):
-        obs = obs / 255.0
-        self.outputs["obs"] = obs
-
+    def _encode_using_convs(self, obs):
         conv = torch.relu(self.convs[0](obs))
         self.outputs["conv1"] = conv
 
@@ -73,8 +78,15 @@ class PixelEncoder(BasePixelEncoder):
             conv = torch.relu(self.convs[i](conv))
             self.outputs["conv%s" % (i + 1)] = conv
 
-        h = conv.view(conv.size(0), -1)
+        h = conv.reshape(conv.size(0), -1)
         return h
+
+    def forward_conv(self, obs):
+        obs = obs / 255.0
+        obs_shape = obs.shape
+        batched_obs = obs.reshape(obs_shape[0] * obs.shape[1], *obs.shape[2:])
+        output = self._encode_using_convs(batched_obs)
+        return output.reshape(obs_shape[0], obs_shape[1], -1).mean(dim=1)
 
     def forward(self, obs, detach=False):
         h = self.forward_conv(obs)
@@ -92,6 +104,12 @@ class PixelEncoder(BasePixelEncoder):
         self.outputs["tanh"] = out
 
         return out
+
+    def copy_conv_weights_from(self, source):
+        """Tie convolutional layers"""
+        # only tie conv layers
+        for i in range(self.num_layers):
+            tie_weights(src=source.convs[i], trg=self.convs[i])
 
 
 class ResNetEncoder(BasePixelEncoder):
@@ -142,6 +160,18 @@ class ResNetEncoder(BasePixelEncoder):
 
         return out
 
+    def copy_conv_weights_from(self, source):
+        """Tie convolutional layers"""
+
+        for (
+            (src_module_name, src_module_param),
+            (trg_module_name, trg_module_param),
+        ) in zip(source.named_parameters(), self.named_parameters()):
+            # Note that we tie the fc layer of the encoder as well but that layer isnt used.
+            if "encoder" in src_module_name:
+                if "weight" in src_module_name or "bias" in src_module_name:
+                    trg_module_param = src_module_param
+
 
 class IdentityEncoder(nn.Module):
     def __init__(self, obs_shape, feature_dim, num_layers, num_filters):
@@ -161,7 +191,7 @@ class IdentityEncoder(nn.Module):
 
 
 _AVAILABLE_ENCODERS = {
-    "pixel": ResNetEncoder,
+    "pixel": PixelEncoder,
     "identity": IdentityEncoder,
     "resnet": ResNetEncoder,
 }

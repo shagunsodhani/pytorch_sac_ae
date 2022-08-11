@@ -130,7 +130,11 @@ def make_agent(obs_shape, action_shape, args, device):
 def main():
     args = parse_args()
     utils.set_seed_everywhere(args.seed)
-    env = gym.make("FetchStack2Stage3-v1")
+    env = gym.make(
+        "FetchStack2EasyStage1-v1",
+        return_pixel_obs=True,
+        viewer_mode="train_using_pixel_obs",
+    )
 
     # env = dmc2gym.make(
     #     domain_name=args.domain_name,
@@ -145,7 +149,7 @@ def main():
     env.seed(args.seed)
 
     # stack several consecutive frames together
-    if args.encoder_type == "pixel":
+    if args.encoder_type in ["pixel", "resnet"]:
         env = utils.FrameStack(env, k=args.frame_stack)
 
     utils.make_dir(args.work_dir)

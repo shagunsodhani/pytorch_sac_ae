@@ -72,7 +72,6 @@ class ReplayBuffer(object):
         self.capacity = capacity
         self.batch_size = batch_size
         self.device = device
-
         # the proprioceptive obs is stored as float32, pixels obs as uint8
         obs_dtype = np.float32 if len(obs_shape) == 1 else np.uint8
 
@@ -162,7 +161,7 @@ class FrameStack(gym.Wrapper):
         self._max_episode_steps = env._max_episode_steps
 
     def _select_pixel_obs(self, obs):
-        obs =  obs[self.obs_key]
+        obs = obs[self.obs_key]
         obs = np.expand_dims(obs, axis=0)
         return obs
 
