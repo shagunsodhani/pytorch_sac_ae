@@ -1,10 +1,12 @@
-import torch
-import numpy as np
-import torch.nn as nn
-import gym
 import os
-from collections import deque
 import random
+from collections import deque
+from typing import Dict
+
+import gym
+import numpy as np
+import torch
+import torch.nn as nn
 
 
 class eval_mode(object):
@@ -25,9 +27,7 @@ class eval_mode(object):
 
 def soft_update_params(net, target_net, tau):
     for param, target_param in zip(net.parameters(), target_net.parameters()):
-        target_param.data.copy_(
-            tau * param.data + (1 - tau) * target_param.data
-        )
+        target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
 
 def set_seed_everywhere(seed):
@@ -55,10 +55,10 @@ def make_dir(dir_path):
 
 def preprocess_obs(obs, bits=5):
     """Preprocessing image, see https://arxiv.org/abs/1807.03039."""
-    bins = 2**bits
+    bins = 2 ** bits
     assert obs.dtype == torch.float32
     if bits < 8:
-        obs = torch.floor(obs / 2**(8 - bits))
+        obs = torch.floor(obs / 2 ** (8 - bits))
     obs = obs / bins
     obs = obs + torch.rand_like(obs) / bins
     obs = obs - 0.5
@@ -67,11 +67,11 @@ def preprocess_obs(obs, bits=5):
 
 class ReplayBuffer(object):
     """Buffer to store environment transitions."""
+
     def __init__(self, obs_shape, action_shape, capacity, batch_size, device):
         self.capacity = capacity
         self.batch_size = batch_size
         self.device = device
-
         # the proprioceptive obs is stored as float32, pixels obs as uint8
         obs_dtype = np.float32 if len(obs_shape) == 1 else np.uint8
 
@@ -103,9 +103,7 @@ class ReplayBuffer(object):
         obses = torch.as_tensor(self.obses[idxs], device=self.device).float()
         actions = torch.as_tensor(self.actions[idxs], device=self.device)
         rewards = torch.as_tensor(self.rewards[idxs], device=self.device)
-        next_obses = torch.as_tensor(
-            self.next_obses[idxs], device=self.device
-        ).float()
+        next_obses = torch.as_tensor(self.next_obses[idxs], device=self.device).float()
         not_dones = torch.as_tensor(self.not_dones[idxs], device=self.device)
 
         return obses, actions, rewards, next_obses, not_dones
@@ -113,22 +111,22 @@ class ReplayBuffer(object):
     def save(self, save_dir):
         if self.idx == self.last_save:
             return
-        path = os.path.join(save_dir, '%d_%d.pt' % (self.last_save, self.idx))
+        path = os.path.join(save_dir, "%d_%d.pt" % (self.last_save, self.idx))
         payload = [
-            self.obses[self.last_save:self.idx],
-            self.next_obses[self.last_save:self.idx],
-            self.actions[self.last_save:self.idx],
-            self.rewards[self.last_save:self.idx],
-            self.not_dones[self.last_save:self.idx]
+            self.obses[self.last_save : self.idx],
+            self.next_obses[self.last_save : self.idx],
+            self.actions[self.last_save : self.idx],
+            self.rewards[self.last_save : self.idx],
+            self.not_dones[self.last_save : self.idx],
         ]
         self.last_save = self.idx
         torch.save(payload, path)
 
     def load(self, save_dir):
         chunks = os.listdir(save_dir)
-        chucks = sorted(chunks, key=lambda x: int(x.split('_')[0]))
+        chucks = sorted(chunks, key=lambda x: int(x.split("_")[0]))
         for chunk in chucks:
-            start, end = [int(x) for x in chunk.split('.')[0].split('_')]
+            start, end = [int(x) for x in chunk.split(".")[0].split("_")]
             path = os.path.join(save_dir, chunk)
             payload = torch.load(path)
             assert self.idx == start
@@ -145,26 +143,41 @@ class FrameStack(gym.Wrapper):
         gym.Wrapper.__init__(self, env)
         self._k = k
         self._frames = deque([], maxlen=k)
-        shp = env.observation_space.shape
+        observation_space = env.observation_space
+        if isinstance(observation_space, gym.spaces.dict.Dict):
+            self.obs_key = "pixel_observation"
+            observation_space = observation_space[self.obs_key]
+            self._process_obs = self._select_pixel_obs
+        else:
+            self._process_obs = lambda x: x
+        shp = observation_space.shape
         self.observation_space = gym.spaces.Box(
             low=0,
             high=1,
-            shape=((shp[0] * k,) + shp[1:]),
-            dtype=env.observation_space.dtype
+            # shape=((shp[0] * k,) + shp[1:]),
+            shape=(k, *shp),
+            dtype=observation_space.dtype,
         )
         self._max_episode_steps = env._max_episode_steps
 
+    def _select_pixel_obs(self, obs):
+        obs = obs[self.obs_key]
+        obs = np.expand_dims(obs, axis=0)
+        return obs
+
     def reset(self):
         obs = self.env.reset()
+        obs = self._select_pixel_obs(obs)
         for _ in range(self._k):
             self._frames.append(obs)
         return self._get_obs()
 
     def step(self, action):
         obs, reward, done, info = self.env.step(action)
+        obs = self._select_pixel_obs(obs)
         self._frames.append(obs)
         return self._get_obs(), reward, done, info
 
     def _get_obs(self):
         assert len(self._frames) == self._k
-        return np.concatenate(list(self._frames), axis=0)
+        return np.concatenate(self._frames, axis=0)

@@ -1,5 +1,6 @@
-import imageio
 import os
+
+import imageio
 import numpy as np
 
 
@@ -18,15 +19,18 @@ class VideoRecorder(object):
 
     def record(self, env):
         if self.enabled:
-            frame = env.render(
-                mode='rgb_array',
-                height=self.height,
-                width=self.width,
-                camera_id=self.camera_id
-            )
+            # frame = env.render(
+            #     mode="rgb_array",
+            #     height=self.height,
+            #     width=self.width,
+            #     camera_id=self.camera_id,
+            # )
+            frame = env.env.env._get_viewer()._read_pixels_as_in_window((256, 256))
+
             self.frames.append(frame)
 
     def save(self, file_name):
         if self.enabled:
             path = os.path.join(self.dir_name, file_name)
+            print(path)
             imageio.mimsave(path, self.frames, fps=self.fps)
